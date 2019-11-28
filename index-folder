@@ -1,0 +1,19 @@
+#!/bin/sh
+if [[ "$1" != "." ]]; then
+	echo "This only works starting from the current folder"
+	echo "Run: $0 ."
+	echo "To run and disconnect: nohup $0 . &"
+	exit 1
+fi
+OUTPUT_FILE="folder-index.txt"
+if [[ -f "folder-index.txt" ]]; then
+	if [[ -f "$OUTPUT_FILE.old" ]]; then
+		echo "$OUTPUT_FILE.old exists. Delete it and try again"
+		exit 1
+	fi
+	mv "$OUTPUT_FILE" "$OUTPUT_FILE.old"
+fi
+
+echo "Started indexing $(pwd) at $(date)" > "$OUTPUT_FILE"
+find . -type f -exec md5sum '{}' + >> $OUTPUT_FILE
+echo "Finished indexing $(pwd) at $(date)" >> "$OUTPUT_FILE"
