@@ -57,7 +57,7 @@ def readShasums():
 
 
 def readShasumFile(indexFile):
-    baseFolder = os.path.dirname(indexFile)
+    prefix = os.path.splitext(os.path.basename(indexFile))[0]
     sums = list()
     with open(indexFile, "r") as indexFileStream:
         pattern = re.compile(r"^([a-f0-9]{32}) +(\./.*)$")
@@ -74,7 +74,7 @@ def readShasumFile(indexFile):
                 raise Exception("In {} could not parse: {}".format(indexFile, line))
             hash = parsed.group(1)
             path = parsed.group(2)
-            fullPath = baseFolder + path[1:]
+            fullPath = prefix + path[1:]
             sums.append((fullPath, hash))
     if VERBOSE:
         print("Read {} entries: {}".format(len(sums), indexFile))
