@@ -22,13 +22,8 @@ def main():
     shasums = createOrUseCache(args.shasums, "shasums.pickle", readShasums)
 
     index = createOrUseCache(args.index, "index.pickle", createIndex, shasums)
-
-    return False
-    createMasterList()
-    index = getMasterList()
-    statTree = createDuplicatePercentageTree(index)
-    print(statTree[4].keys())
-    printStatTree(statTree)
+    print(index["tree"])
+    index["tree"].printTree(2)
 
 
 def createOrUseCache(override, filename, function, *posArgs):
@@ -82,35 +77,119 @@ def readShasumFile(indexFile):
 
 
 def createIndex(shasums):
-    hashes = set()
     filesByHash = defaultdict(list)
     for path, shasum in shasums:
         filesByHash[shasum].append(path)
-        hashes.add(shasum)
 
-    # Create a nested TreeNode structure where the .files dict maps the filename
-    # to a list of full paths for the same hash
-    TreeNode = namedtuple("TreeNode", ["dirs", "files"])
-    def newNode():
-        return TreeNode(dict(), dict())
-
-    tree = TreeNode(dict(), dict())
+    # Create a nested TreeNode structure
+    fileNodesByHash = defaultdict(list)
+    tree = TreeNode(fileNodesByHash, "")
     for hash, files in filesByHash.items():
         for file in files:
             node = tree
-            dirParts = path.split("/")
+            dirParts = file.split("/")
             for dirPart in dirParts[:-1]:
-                nextNode = node.dirs.get(dirPart)
-                if nextNode is None:
-                    nextNode = newNode()
-                    node.dirs[dirPart] = nextNode
-                node = nextNode
-            node.files[dirParts[-1]] = files
+                node = node.subfolder(dirPart)
+            node.file(dirParts[-1], hash)
 
     if VERBOSE:
-        print("Of {} entries, {} are unique".format(len(shasums), len(hashes)))
-    return dict(filesByHash=filesByHash)
+        print("Of {} entries, {} are unique".format(len(shasums), len(filesByHash.keys())))
+        print("Of {} entries, {} are unique".format(len(shasums), len(fileNodesByHash.keys())))
 
+    return dict(filesByHash=filesByHash, tree=tree, fileNodesByHash=fileNodesByHash)
+
+
+class TreeNode(object):
+
+    def __init__(self, fileNodesByHash, name):
+        self._parent = None
+        self._name = name
+        self._dirs = {}
+        self._fileNodesByHash = fileNodesByHash
+        self._files = {}
+        self._stats = None
+
+    def subfolder(self, name):
+        node = self._dirs.get(name)
+        if node is None:
+            node = TreeNode(self._fileNodesByHash, name)
+            node._parent = self
+
+            self._dirs[name] = node
+
+            self._stats = None
+        return node
+
+    def file(self, name, hash):
+        node = self._files.get(name)
+        if node is None:
+            node = FileNode(self._fileNodesByHash, name, hash)
+            node._parent = self
+
+            self._files[name] = node
+            self._fileNodesByHash[hash].append(node)
+
+            self._stats = None
+        return node
+
+    def fullPath(self):
+        if self._parent is None:
+            return self._name
+        return "{}/{}".format(self._parent.fullPath(), self._name)
+
+    def stats(self):
+        if self._stats is None:
+            totalFiles = len(self._files)
+            totalDupes = 0
+            for node in self._dirs.values():
+                nodeStats = node.stats()
+                totalFiles += nodeStats["files"]
+                totalDupes += nodeStats["dupes"]
+            for node in self._files.values():
+                if node.isDupe():
+                    totalDupes += 1
+            self._stats = dict(files=totalFiles, dupes=totalDupes)
+        return self._stats
+
+    def printTree(self, depth):
+        # Some stats and printing we don't care about
+        if self._name in [".git", "@eaDir"]:
+            return
+
+        # Print self
+        print(self)
+
+        if depth == 0:
+            return
+
+        # Stop traversal if no dupes exist
+        if self.stats()["dupes"] == 0:
+            return
+
+        for node in self._dirs.values():
+            node.printTree(depth - 1)
+
+    def __repr__(self):
+        stats = self.stats()
+        return "{}: {} files, {} dupe ({:.2f}%)".format(
+               self.fullPath(),
+               stats["files"],
+               stats["dupes"],
+               stats["dupes"] * 100 / stats["files"])
+
+
+class FileNode(object):
+
+    def __init__(self, fileNodesByHash, name, hash):
+        self._fileNodesByHash = fileNodesByHash
+        self._name = name
+        self._hash = hash
+
+    def fullPath(self):
+        return "{}/{}".format(self._parent.fullPath(), self._name)
+
+    def isDupe(self):
+        return len(self._fileNodesByHash[self._hash]) > 1
 
 if __name__ == "__main__":
     main()
