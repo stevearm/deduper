@@ -26,7 +26,7 @@ def main():
     index = createOrUseCache(args.index, "index.pickle", createIndex, shasums)
 
     if VERBOSE:
-        print("Of {} entries, {} are unique".format(len(shasums), len(index["filesByHash"].keys())))
+        print("Of {} entries, {} are unique".format(len(shasums), len(index["fileNodesByHash"].keys())))
 
     if args.print_tree:
         index["tree"].printTree(args.print_tree, args.show_dupe_sources)
@@ -101,8 +101,9 @@ def createIndex(shasums):
     # Populate caches
     tree.stats()
 
-    return dict(filesByHash=filesByHash, tree=tree, fileNodesByHash=fileNodesByHash)
+    return dict(tree=tree, fileNodesByHash=fileNodesByHash)
 
+NodeStats = namedtuple("NodeStats", ["files", "dupes", "dupeSources", "hashesWithinTree", "dupesWithinTree"])
 
 class TreeNode(object):
 
@@ -143,16 +144,20 @@ class TreeNode(object):
         return self._parent.fullPath() + [self._name]
 
     def stats(self):
-        pathLength = len(self.fullPath())
         if self._stats is None:
+            pathLength = len(self.fullPath())
             totalFiles = len(self._files)
             totalDupes = 0
+            hashesWithinTree = set()
+            dupesWithinTree = 0
             dupeSources = defaultdict(int)
             for node in self._dirs.values():
                 nodeStats = node.stats()
-                totalFiles += nodeStats["files"]
-                totalDupes += nodeStats["dupes"]
-                for dupeSource, dupeCount in nodeStats["dupeSources"].items():
+                totalFiles += nodeStats.files
+                totalDupes += nodeStats.dupes
+                hashesWithinTree = hashesWithinTree.union(nodeStats.hashesWithinTree)
+                dupesWithinTree += nodeStats.dupesWithinTree
+                for dupeSource, dupeCount in nodeStats.dupeSources.items():
                     trimmedSource = "/".join(dupeSource.split("/")[:pathLength])
                     dupeSources[trimmedSource] += dupeCount
             for node in self._files.values():
@@ -161,7 +166,14 @@ class TreeNode(object):
                         trimmedSource = "/".join(dupeSource.split("/")[:pathLength])
                         dupeSources[trimmedSource] += 1
                     totalDupes += 1
-            self._stats = dict(files=totalFiles, dupes=totalDupes, dupeSources=dupeSources)
+                    if node.hash() in hashesWithinTree:
+                        dupesWithinTree += 1
+                hashesWithinTree.add(node.hash())
+            self._stats = NodeStats(files=totalFiles,
+                                    dupes=totalDupes,
+                                    dupeSources=dupeSources,
+                                    hashesWithinTree=hashesWithinTree,
+                                    dupesWithinTree=dupesWithinTree)
         return self._stats
 
     def printTree(self, depth, showDupeSources):
@@ -173,13 +185,13 @@ class TreeNode(object):
         stats = self.stats()
         print(self)
         if showDupeSources:
-            print("Dupes from {}".format(stats["dupeSources"]))
+            print("Dupes from {}".format(stats.dupeSources))
 
         if depth == 0:
             return
 
         # Stop traversal if no dupes exist
-        if self.stats()["dupes"] == 0:
+        if self.stats().dupes == 0:
             return
 
         for node in self._dirs.values():
@@ -187,11 +199,13 @@ class TreeNode(object):
 
     def __repr__(self):
         stats = self.stats()
-        return "{}: {} files, {} dupe ({:.2f}%)".format(
+        return "{}: {} files, {} dupe ({:.2f}%), {} dupes within tree ({:.2f}%)".format(
                "/".join(self.fullPath()),
-               stats["files"],
-               stats["dupes"],
-               stats["dupes"] * 100 / stats["files"])
+               stats.files,
+               stats.dupes,
+               stats.dupes * 100 / stats.files,
+               stats.dupesWithinTree,
+               stats.dupesWithinTree * 100 / stats.files)
 
 
 class FileNode(object):
@@ -206,6 +220,9 @@ class FileNode(object):
 
     def isDupe(self):
         return len(self._fileNodesByHash[self._hash]) > 1
+
+    def hash(self):
+        return self._hash
 
     def dupeSources(self):
         dupes = set()
