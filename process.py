@@ -22,6 +22,10 @@ def main():
     task.add_argument("--show-dupe-sources", action="store_true", help="Show the source of duplicates")
     task.set_defaults(func=printTree)
 
+    task = tasks.add_parser("node", help="Print a node")
+    task.add_argument("path", type=str, help="The path to print")
+    task.set_defaults(func=printNode)
+
     args = parser.parse_args()
 
     global VERBOSE
@@ -119,6 +123,20 @@ def printTree(index, args):
     return True
 
 
+def printNode(index, args):
+    node = index["tree"]
+    for dirPart in args.path.split("/")[:-1]:
+        if dirPart == "":
+            continue
+        next = node.subfolder(dirPart, autocreate=False)
+        if next is None:
+            print("No node found for {} at {}".format(dirPart, node.fullPath()))
+            return False
+        node = next
+    print(node)
+    print("Dupes from {}".format(node.stats().dupeSources))
+    return True
+
 NodeStats = namedtuple("NodeStats", ["files", "dupes", "dupeSources", "hashesWithinTree", "dupesWithinTree"])
 
 class TreeNode(object):
@@ -131,9 +149,9 @@ class TreeNode(object):
         self._files = {}
         self._stats = None
 
-    def subfolder(self, name):
+    def subfolder(self, name, autocreate=True):
         node = self._dirs.get(name)
-        if node is None:
+        if node is None and autocreate:
             node = TreeNode(self._fileNodesByHash, name)
             node._parent = self
 
