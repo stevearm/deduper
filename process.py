@@ -6,6 +6,7 @@ import os
 import os.path
 import pickle
 import re
+import sys
 
 VERBOSE=False
 
@@ -14,22 +15,31 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Print lots of messages")
     parser.add_argument("--shasums", action="store_true", help="Refresh shasums.pickle")
     parser.add_argument("--index", action="store_true", help="Refresh index.pickle")
-    parser.add_argument("--print-tree", type=int, help="Print the tree to the given depth")
-    parser.add_argument("--show-dupe-sources", action="store_true", help="Show the source of duplicates")
+    tasks = parser.add_subparsers(title="Commands")
+
+    task = tasks.add_parser("tree", help="Print the tree to a given depth")
+    task.add_argument("--depth", default=2, help="Depth to print")
+    task.add_argument("--show-dupe-sources", action="store_true", help="Show the source of duplicates")
+    task.set_defaults(func=printTree)
+
     args = parser.parse_args()
 
     global VERBOSE
     VERBOSE=args.verbose
 
-    shasums = createOrUseCache(args.shasums, "shasums.pickle", readShasums)
+    if "func" not in args:
+        parser.print_usage()
+        sys.exit(1)
 
+    # Load (and refresh) required data
+    shasums = createOrUseCache(args.shasums, "shasums.pickle", readShasums)
     index = createOrUseCache(args.index, "index.pickle", createIndex, shasums)
 
     if VERBOSE:
         print("Of {} entries, {} are unique".format(len(shasums), len(index["fileNodesByHash"].keys())))
 
-    if args.print_tree:
-        index["tree"].printTree(args.print_tree, args.show_dupe_sources)
+    if not args.func(index, args):
+        sys.exit(1)
 
 
 def createOrUseCache(override, filename, function, *posArgs):
@@ -102,6 +112,12 @@ def createIndex(shasums):
     tree.stats()
 
     return dict(tree=tree, fileNodesByHash=fileNodesByHash)
+
+
+def printTree(index, args):
+    index["tree"].printTree(args.depth, args.show_dupe_sources)
+    return True
+
 
 NodeStats = namedtuple("NodeStats", ["files", "dupes", "dupeSources", "hashesWithinTree", "dupesWithinTree"])
 
