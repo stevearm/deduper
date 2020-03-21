@@ -28,76 +28,6 @@ def createDupesTable(db):
     db.execute("CREATE TABLE dupes(hash text)")
     db.executemany("INSERT INTO dupes(hash) VALUES (?)", dupes)
 
-def _refresh(args):
-    # Wipe the database
-    if os.path.isfile("index.db"):
-        os.remove("index.db")
-    db = loadDb()
-    try:
-        # Create and fill hashes table
-        with db:
-            db.execute("CREATE TABLE hashes(path text, hash text)")
-        folder = "shasums"
-        for file in os.listdir("shasums"):
-            filePath = os.path.join(folder, file)
-            if not os.path.isfile(filePath):
-                continue
-            if not filePath.endswith(".txt"):
-                continue
-            with db:
-                db.executemany("INSERT INTO hashes(path, hash) VALUES (?, ?)", readShasumFile(filePath))
-
-        # Create and fill dupes table
-        dupes = set()
-        with db:
-            for result in db.execute("SELECT p1.hash"
-                                    " FROM hashes p1 JOIN hashes p2"
-                                    " WHERE p1.hash == p2.hash"
-                                    "   AND p1.path != p2.path"):
-                dupes.add((result[0],))
-            db.execute("CREATE TABLE dupes(hash text)")
-            db.executemany("INSERT INTO dupes(hash) VALUES (?)", dupes)
-
-        return True
-    finally:
-        db.close()
-
-
-def readShasumFile(indexFile):
-    prefix = "/" + os.path.splitext(os.path.basename(indexFile))[0]
-    sums = list()
-    with open(indexFile, "r") as indexFileStream:
-        pattern = re.compile(r"^([a-f0-9]{32}) +(\./.*)$")
-        for line in indexFileStream:
-            if line.startswith("Started indexing") or \
-               line.startswith("Finished indexing") or \
-               line.endswith("folder-index.txt") or \
-               line.endswith("nohup.out") or \
-               line.endswith(".DS_Store") or \
-               line.strip() == "":
-                continue
-            parsed = re.match(pattern, line)
-            if parsed is None:
-                raise Exception("In {} could not parse: {}".format(indexFile, line))
-            hash = parsed.group(1)
-            path = parsed.group(2)
-            fullPath = prefix + path[1:]
-            sums.append((fullPath, hash))
-    if VERBOSE:
-        print("Read {} entries: {}".format(len(sums), indexFile))
-    return sums
-
-
-def _dupePairsForPath(args):
-    db = loadDb()
-    try:
-        with db:
-            for hash, path1, path2 in getDuplicatePairs(db, args.path):
-                print("{} {}".format(path1, path2))
-        return True
-    finally:
-        db.close()
-
 
 """ Return an entry (hash, path) for every dupe
 """
@@ -147,9 +77,72 @@ class Path(object):
     def __repr__(self):
         return self._path
 
-VERBOSE=False
 
-def _main():
+def readShasumFile(indexFile):
+    prefix = "/" + os.path.splitext(os.path.basename(indexFile))[0]
+    sums = list()
+    with open(indexFile, "r") as indexFileStream:
+        pattern = re.compile(r"^([a-f0-9]{32}) +(\./.*)$")
+        for line in indexFileStream:
+            if line.startswith("Started indexing") or \
+               line.startswith("Finished indexing") or \
+               line.endswith("folder-index.txt") or \
+               line.endswith("nohup.out") or \
+               line.endswith(".DS_Store") or \
+               line.strip() == "":
+                continue
+            parsed = re.match(pattern, line)
+            if parsed is None:
+                raise Exception("In {} could not parse: {}".format(indexFile, line))
+            hash = parsed.group(1)
+            path = parsed.group(2)
+            fullPath = prefix + path[1:]
+            sums.append((fullPath, hash))
+    return sums
+
+
+def _refresh(args):
+    # Wipe the database
+    if os.path.isfile("index.db"):
+        os.remove("index.db")
+    db = loadDb()
+    try:
+        # Create and fill hashes table
+        with db:
+            db.execute("CREATE TABLE hashes(path text, hash text)")
+        folder = "shasums"
+        for file in os.listdir("shasums"):
+            filePath = os.path.join(folder, file)
+            if not os.path.isfile(filePath):
+                continue
+            if not filePath.endswith(".txt"):
+                continue
+            with db:
+                hashes = readShasumFile(filePath)
+                if args.verbose:
+                    print("Read {} entries: {}".format(len(hashes), filePath))
+                db.executemany("INSERT INTO hashes(path, hash) VALUES (?, ?)", hashes)
+
+        with db:
+            createDupesTable(db)
+
+        return True
+    finally:
+        db.close()
+
+
+def _dupePairsForPath(args):
+    db = loadDb()
+    try:
+        with db:
+            for hash, path1, path2 in getDuplicatePairs(db, args.path):
+                print("{} {}".format(path1, path2))
+        return True
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process for dupes")
     parser.add_argument("--verbose", action="store_true", help="Print lots of messages")
     tasks = parser.add_subparsers(title="Commands")
@@ -163,15 +156,9 @@ def _main():
 
     args = parser.parse_args()
 
-    global VERBOSE
-    VERBOSE=args.verbose
-
     if "func" not in args:
         parser.print_usage()
         sys.exit(1)
 
     if not args.func(args):
         sys.exit(1)
-
-if __name__ == "__main__":
-    _main()
